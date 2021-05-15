@@ -36,4 +36,62 @@ extension URLSession: LongPollingSessionProtocol {
     where P.Output == (data: Data, response: URLResponse), P.Failure == URLError {
         LongPollingPublisher(dataTaskPublisher: dataTaskPublisher)
     }
+
+    public var timeoutIntervalForRequest: TimeInterval {
+        configuration.timeoutIntervalForRequest
+    }
+
+    public var timeoutIntervalForResource: TimeInterval {
+        configuration.timeoutIntervalForResource
+    }
 }
+
+#if DEBUG
+public class LongPollingSessionMock: LongPollingSessionProtocol {
+    public var timeoutIntervalForResource: TimeInterval = 60
+    public var timeoutIntervalForRequest: TimeInterval = 60
+
+    public init() { }
+
+    public var longPollingPassthrough = PassthroughSubject<(data: Data, response: URLResponse), URLError>()
+
+    public lazy var longPollingPassthroughURL: (URL) -> LongPollingPublisher = { _ in
+        LongPollingPublisher(dataTaskPublisher: self.longPollingPassthrough)
+    }
+    public lazy var longPollingPassthroughURLRequest: (URLRequest) -> LongPollingPublisher = { _ in
+        LongPollingPublisher(dataTaskPublisher: self.longPollingPassthrough)
+    }
+    public lazy var longPollingPassthroughFromPublisher: (AnyPublisher<(data: Data, response: URLResponse), URLError>) -> LongPollingPublisher = { p in
+        LongPollingPublisher(dataTaskPublisher: p)
+    }
+
+    public func serverSendsLongPollingSuccess(
+        data: Data = Data(),
+        response: URLResponse = HTTPURLResponse(url: URL(string: "https://127.0.0.1")!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+        completes: Bool = false
+    ) {
+        longPollingPassthrough.send((data: data, response: response))
+        if completes { longPollingPassthrough.send(completion: .finished) }
+    }
+
+    public func serverSendsLongPollingFailure(_ error: URLError) {
+        longPollingPassthrough.send(completion: .failure(error))
+    }
+}
+
+/// Conformance to LongPollingSessionProtocol
+extension LongPollingSessionMock {
+    public func longPollingPublisher(for url: URL) -> LongPollingPublisher {
+        longPollingPassthroughURL(url)
+    }
+
+    public func longPollingPublisher(for request: URLRequest) -> LongPollingPublisher {
+        longPollingPassthroughURLRequest(request)
+    }
+
+    public func longPollingPublisher<P>(for dataTaskPublisher: P) -> LongPollingPublisher
+    where P: Publisher, P.Failure == URLError, P.Output == (data: Data, response: URLResponse) {
+        longPollingPassthroughFromPublisher(dataTaskPublisher.eraseToAnyPublisher())
+    }
+}
+#endif

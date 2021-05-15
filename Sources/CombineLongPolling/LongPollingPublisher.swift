@@ -44,7 +44,7 @@ extension LongPollingPublisher {
         private var started = false
         private var finished = false
         private var currentRequest: AnyCancellable?
-        private var semaphore = DispatchSemaphore(value: 1)
+        private var semaphore = DispatchSemaphore(value: 0)
 
         init(dataTaskPublisher: AnyPublisher<(data: Data, response: URLResponse), URLError>, subscriber: S) {
             self.dataTaskPublisher = dataTaskPublisher
@@ -83,13 +83,22 @@ extension LongPollingPublisher {
         }
 
         private func start() {
-            self.semaphore = DispatchSemaphore(value: 1)
+            // Instead of creating the semaphore with value 1, we signal() immediately to increase the value to 1. This workaround fixes the
+            // "Semaphore object deallocated while in use"-crash. See https://lists.apple.com/archives/cocoa-dev/2014/Apr/msg00485.html
+            // Seal of approvoal: "Greg Parker stated that it’s a feature, not a bug" 🦭
+            self.semaphore = DispatchSemaphore(value: 0)
+            self.semaphore.signal()
             startPolling()
         }
 
         private func startPolling() {
             DispatchQueue.global(qos: .utility).async {
-                while(self.started && !self.finished) {
+                while({
+                    defer { self.lock.unlock() }
+                    self.lock.lock()
+                    return self.started && !self.finished
+                }() ) {
+                    // on the first run, the semaphore is 1, so we are not blocked here and fetch the data immediately.
                     self.semaphore.wait()
 
                     self.currentRequest = self.dataTaskPublisher
